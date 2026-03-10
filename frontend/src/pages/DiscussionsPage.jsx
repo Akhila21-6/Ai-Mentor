@@ -1,500 +1,975 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import Header from "../components/Header";
 import Sidebar from "../components/Sidebar";
 import { useAuth } from "../context/AuthContext";
+import { useSidebar } from "../context/SidebarContext";
 import {
-  Heart,
-  Reply,
-  Image as ImageIcon,
-  Code,
-  AtSign,
-  Bot,
-  Bookmark,
+  MessageCircle,
+  ThumbsUp,
+  ThumbsDown,
+  TrendingUp,
+  RefreshCw,
+  X,
+  Send,
+  Smile,
+  Flag,
+  Users,
+  BookOpen,
+  ChevronDown,
+  ArrowRight,
+  MoreVertical,
+  Clock,
 } from "lucide-react";
 
+/* ───────── helpers ───────── */
+const getRelativeTime = (dateStr) => {
+  if (!dateStr) return "";
+  const now = new Date();
+  const d = new Date(dateStr);
+  const diffMs = now - d;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return d.toLocaleDateString();
+};
+
+const getInitial = (name) => (name ? name.charAt(0).toUpperCase() : "?");
+
+const avatarColors = [
+  "bg-purple-600",
+  "bg-indigo-600",
+  "bg-teal-600",
+  "bg-orange-500",
+  "bg-pink-600",
+  "bg-cyan-600",
+  "bg-green-600",
+  "bg-red-500",
+];
+const pickColor = (str) => {
+  let h = 0;
+  for (let i = 0; i < (str || "").length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
+  return avatarColors[Math.abs(h) % avatarColors.length];
+};
+
+const GLOBAL_CATEGORIES = [
+  "Course Discussion",
+  "General",
+  "Help & Support",
+  "Feedback",
+  "Off-Topic",
+];
+
+const categoryColorMap = {
+  "Course Discussion": "border-purple-500 text-purple-400",
+  General: "border-blue-500 text-blue-400",
+  "Help & Support": "border-green-500 text-green-400",
+  Feedback: "border-yellow-500 text-yellow-400",
+  "Off-Topic": "border-gray-500 text-gray-400",
+};
+
+/* ────────────────────────────────────────── */
+/*  MAIN COMPONENT                            */
+/* ────────────────────────────────────────── */
 const DiscussionsPage = () => {
   const { user } = useAuth();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useState("Recent");
-  const [questionTitle, setQuestionTitle] = useState("");
-  const [questionDescription, setQuestionDescription] = useState("");
-  const [replyText, setReplyText] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { sidebarCollapsed } = useSidebar();
+  const token = localStorage.getItem("token");
 
-  const tabs = ["Recent", "Unanswered", "My Doubts", "Popular"];
+  /* ── top-level state ── */
+  const [activeView, setActiveView] = useState("courseCommunity"); // "courseCommunity" | "global"
 
-  // Fetch discussions from API
+  /* ── course community state ── */
+  const [coursePosts, setCoursePosts] = useState([]);
+  const [coursePostsLoading, setCoursePostsLoading] = useState(false);
+  const [courseSort, setCourseSort] = useState("Recent");
+  const [selectedCourse, setSelectedCourse] = useState(null); // { courseId, courseName }
+  const [panelPosts, setPanelPosts] = useState([]);
+  const [panelLoading, setPanelLoading] = useState(false);
+  const [panelSort, setPanelSort] = useState("Recent");
+  const [panelReplyText, setPanelReplyText] = useState("");
+  const [allCourses, setAllCourses] = useState([]);
+
+  /* ── global community state ── */
+  const [globalPosts, setGlobalPosts] = useState([]);
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const [globalSort, setGlobalSort] = useState("Recent");
+  const [globalCategoryFilter, setGlobalCategoryFilter] = useState("All Categories");
+  const [globalContent, setGlobalContent] = useState("");
+  const [globalCategory, setGlobalCategory] = useState("");
+  const [expandedGlobalPost, setExpandedGlobalPost] = useState(null);
+  const [globalReplyText, setGlobalReplyText] = useState("");
+
+  const panelRef = useRef(null);
+
+  /* ───────────────────────── API helpers ───────────────────────── */
+  const authHeaders = useCallback(
+    () => ({
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    }),
+    [token]
+  );
+
+  // Fetch all courses (from courses.json via API)
+  const fetchAllCourses = useCallback(async () => {
+    try {
+      const res = await fetch("/api/courses", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      // courses.json has popularCourses
+      const list = data.popularCourses || data.courseCards || data || [];
+      setAllCourses(Array.isArray(list) ? list : []);
+    } catch {
+      /* ignore */
+    }
+  }, [token]);
+
+  // Course community – all posts across courses
+  const fetchCoursePosts = useCallback(
+    async (sort) => {
+      setCoursePostsLoading(true);
+      try {
+        const q = sort === "Popular" ? "?sort=popular" : "";
+        const res = await fetch(`/api/community/course-posts${q}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error();
+        setCoursePosts(await res.json());
+      } catch {
+        setCoursePosts([]);
+      } finally {
+        setCoursePostsLoading(false);
+      }
+    },
+    [token]
+  );
+
+  // Course panel – posts for a specific course
+  const fetchPanelPosts = useCallback(
+    async (courseId, sort) => {
+      setPanelLoading(true);
+      try {
+        const q = sort === "Popular" ? "?sort=popular" : "";
+        const res = await fetch(`/api/community/course/${courseId}${q}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error();
+        setPanelPosts(await res.json());
+      } catch {
+        setPanelPosts([]);
+      } finally {
+        setPanelLoading(false);
+      }
+    },
+    [token]
+  );
+
+  // Global posts
+  const fetchGlobalPosts = useCallback(
+    async (cat, sort) => {
+      setGlobalLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (cat && cat !== "All Categories") params.set("category", cat);
+        if (sort === "Popular") params.set("sort", "popular");
+        const res = await fetch(`/api/community/global?${params}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error();
+        setGlobalPosts(await res.json());
+      } catch {
+        setGlobalPosts([]);
+      } finally {
+        setGlobalLoading(false);
+      }
+    },
+    [token]
+  );
+
+  // Create post
+  const createPost = async (body) => {
+    const res = await fetch("/api/community", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error("Failed to create post");
+    return res.json();
+  };
+
+  // Like / dislike / reply
+  const doAction = async (id, action, body) => {
+    const method = action === "reply" ? "POST" : "PUT";
+    const res = await fetch(`/api/community/${id}/${action}`, {
+      method,
+      headers: authHeaders(),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) throw new Error();
+    return res.json();
+  };
+
+  /* ───────── effects ───────── */
   useEffect(() => {
-    fetchDiscussions();
-  }, []);
+    fetchAllCourses();
+  }, [fetchAllCourses]);
 
-  const fetchDiscussions = async () => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch("http://localhost:5000/api/discussions", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch discussions");
-      }
-
-      const data = await response.json();
-      setDiscussions(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const createDiscussion = async (title, description) => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch("/api/discussions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ title, description }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to create discussion");
-      }
-
-      const newDiscussion = await response.json();
-      setDiscussions([newDiscussion, ...discussions]);
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const addReply = async (discussionId, text) => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`/api/discussions/${discussionId}/reply`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to add reply");
-      }
-
-      const updatedDiscussion = await response.json();
-      setDiscussions(
-        discussions.map((d) => (d._id === discussionId ? updatedDiscussion : d))
-      );
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const [discussions, setDiscussions] = useState([]);
-  const [myCourses, setMyCourses] = useState([]);
-
-  // Function to map purchased courses to display format
-  const mapPurchasedCoursesToDisplay = async (purchasedCourses) => {
-    if (!purchasedCourses || purchasedCourses.length === 0) return [];
-
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch("/api/courses/my-courses", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch courses");
-      }
-
-      const coursesData = await response.json();
-
-      return purchasedCourses
-        .map((purchasedCourse, index) => {
-          const courseCard = coursesData.find(
-            (card) => card.id === purchasedCourse.courseId
-          );
-          if (!courseCard) return null;
-
-          const completedLessons =
-            purchasedCourse.progress?.completedLessons?.length || 0;
-          const totalLessons =
-            parseInt(courseCard.lessons.split(" of ")[1]) || 1;
-          const progress = Math.round((completedLessons / totalLessons) * 100);
-
-          const currentLesson = purchasedCourse.progress?.currentLesson;
-          const subtitle = currentLesson
-            ? `Lesson ${currentLesson.lessonId}: ${currentLesson.moduleTitle}`
-            : courseCard.lessons;
-
-          // Map courseId to image paths
-          const imageMap = {
-            1: "AI_Tutor_New_UI/Discussion_Room/react_fundamentals.png",
-            2: "AI_Tutor_New_UI/Discussion_Room/python_for_ai.png",
-            3: "AI_Tutor_New_UI/Discussion_Room/digital_marketing.png",
-          };
-
-          const progressColorMap = {
-            1: "bg-indigo-600",
-            2: "bg-purple-600",
-            3: "bg-cyan-600",
-          };
-
-          return {
-            title: purchasedCourse.courseTitle,
-            subtitle: subtitle,
-            progress: progress,
-            lessons: `${completedLessons}/${totalLessons}`,
-            image:
-              imageMap[purchasedCourse.courseId] ||
-              "AI_Tutor_New_UI/Discussion_Room/react_fundamentals.png",
-            progressColor:
-              progressColorMap[purchasedCourse.courseId] || "bg-indigo-600",
-            isActive: index === 0, // First course is active
-          };
-        })
-        .filter((course) => course !== null);
-    } catch (error) {
-      console.error("Error fetching courses:", error);
-      return [];
-    }
-  };
-
-  // Load dynamic courses data
   useEffect(() => {
-    const loadCourses = async () => {
-      if (user && user.purchasedCourses) {
-        const dynamicCourses = await mapPurchasedCoursesToDisplay(
-          user.purchasedCourses
-        );
-        setMyCourses(dynamicCourses);
-      }
-    };
-    loadCourses();
-  }, [user]);
+    if (activeView === "courseCommunity") fetchCoursePosts(courseSort);
+  }, [activeView, courseSort, fetchCoursePosts]);
 
-  const handleSubmitQuestion = async (e) => {
+  useEffect(() => {
+    if (activeView === "global") fetchGlobalPosts(globalCategoryFilter, globalSort);
+  }, [activeView, globalCategoryFilter, globalSort, fetchGlobalPosts]);
+
+  useEffect(() => {
+    if (selectedCourse) fetchPanelPosts(selectedCourse.courseId, panelSort);
+  }, [selectedCourse, panelSort, fetchPanelPosts]);
+
+  /* ───────── handlers ───────── */
+  const handleLike = async (postId, source) => {
+    try {
+      const updated = await doAction(postId, "like");
+      patchPost(updated, source);
+    } catch { /* ignore */ }
+  };
+
+  const handleDislike = async (postId, source) => {
+    try {
+      const updated = await doAction(postId, "dislike");
+      patchPost(updated, source);
+    } catch { /* ignore */ }
+  };
+
+  const handleReplySubmit = async (postId, text, source) => {
+    if (!text.trim()) return;
+    try {
+      const updated = await doAction(postId, "reply", { text });
+      patchPost(updated, source);
+    } catch { /* ignore */ }
+  };
+
+  const patchPost = (updated, source) => {
+    const replace = (list) => list.map((p) => (p.id === updated.id ? updated : p));
+    if (source === "courseGrid") setCoursePosts(replace);
+    if (source === "panel") setPanelPosts(replace);
+    if (source === "global") setGlobalPosts(replace);
+  };
+
+  // Post in course panel
+  const handlePanelPost = async (text) => {
+    if (!text.trim() || !selectedCourse) return;
+    try {
+      const newPost = await createPost({
+        type: "course",
+        courseId: selectedCourse.courseId,
+        courseName: selectedCourse.courseName,
+        content: text,
+      });
+      setPanelPosts((prev) => [newPost, ...prev]);
+      setCoursePosts((prev) => [newPost, ...prev]);
+      setPanelReplyText("");
+    } catch { /* ignore */ }
+  };
+
+  // Post in global
+  const handleGlobalPost = async (e) => {
     e.preventDefault();
-    if (!questionTitle.trim() || !questionDescription.trim()) return;
-
-    await createDiscussion(questionTitle, questionDescription);
-    setQuestionTitle("");
-    setQuestionDescription("");
+    if (!globalContent.trim() || !globalCategory) return;
+    try {
+      const newPost = await createPost({
+        type: "global",
+        category: globalCategory,
+        content: globalContent,
+      });
+      setGlobalPosts((prev) => [newPost, ...prev]);
+      setGlobalContent("");
+      setGlobalCategory("");
+    } catch { /* ignore */ }
   };
 
-  const handleReply = async (discussionId) => {
-    if (!replyText.trim()) return;
-    await addReply(discussionId, replyText);
-    setReplyText("");
-  };
+  /* helper: find course name from coursePosts for display */
+  const courseNameForPost = (post) => post.courseName || `Course #${post.courseId}`;
 
+  /* ─────────────────────────────────────────────────────── */
+  /*  RENDER                                                  */
+  /* ─────────────────────────────────────────────────────── */
   return (
     <div className="min-h-screen bg-canvas-alt flex flex-col">
-      <Header sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
+      <Header />
+      <Sidebar activePage="discussions" />
 
-      <Sidebar
-        sidebarOpen={sidebarOpen}
-        setSidebarOpen={setSidebarOpen}
-        sidebarCollapsed={sidebarCollapsed}
-        setSidebarCollapsed={setSidebarCollapsed}
-        activePage="discussions"
-      />
-
-      {/* Main Content */}
       <div
-        className={`flex-1 flex transition-all duration-300 mt-10 ${
+        className={`flex-1 flex flex-col transition-all duration-300 mt-10 ${
           sidebarCollapsed ? "lg:ml-20" : "lg:ml-80"
         }`}
       >
-        {/* Discussion Content */}
-        <main className="flex-1 bg-canvas-alt p-4 sm:p-6">
-          <div className="max-w-4xl pt-12 mx-auto space-y-4 sm:space-y-6">
-            {/* Ask a Question Section */}
-            <div className="bg-card rounded-xl border border-border p-4 sm:p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-main mb-4">
-                Ask a Question
-              </h2>
-              <form onSubmit={handleSubmitQuestion} className="space-y-4">
-                <input
-                  type="text"
-                  placeholder="Title of your question..."
-                  value={questionTitle}
-                  onChange={(e) => setQuestionTitle(e.target.value)}
-                  className="w-full px-4 py-3 bg-input border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-main placeholder-muted"
-                />
-                <textarea
-                  placeholder="Describe your doubt in detail..."
-                  value={questionDescription}
-                  onChange={(e) => setQuestionDescription(e.target.value)}
-                  rows={4}
-                  className="w-full px-4 py-3 bg-input border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-none text-main placeholder-muted"
-                />
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
-                  <div className="flex items-center space-x-2 sm:space-x-4">
-                    <button
-                      type="button"
-                      className="flex items-center space-x-1 sm:space-x-2 text-muted hover:text-main"
-                    >
-                      <ImageIcon className="w-4 h-4" />
-                      <span className="text-sm">Image</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="flex items-center space-x-1 sm:space-x-2 text-muted hover:text-main"
-                    >
-                      <Code className="w-4 h-4" />
-                      <span className="text-sm">Code</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="flex items-center space-x-1 sm:space-x-2 text-muted hover:text-main"
-                    >
-                      <AtSign className="w-4 h-4" />
-                      <span className="text-sm">Mention</span>
-                    </button>
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full sm:w-auto px-6 py-2 bg-gradient-to-r from-orange-500 to-teal-500 text-white font-semibold rounded-lg hover:opacity-90 transition-opacity"
-                  >
-                    Post Question
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            {/* Filter Tabs */}
-            <div className="bg-card rounded-xl border border-border p-2 shadow-sm">
-              <div className="flex space-x-1">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                      activeTab === tab
-                        ? "bg-gradient-to-r from-orange-500 to-teal-500 text-white"
-                        : "text-muted hover:text-main hover:bg-canvas-alt"
-                    }`}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Discussion Threads */}
-            <div className="space-y-4 sm:space-y-6">
-              {loading ? (
-                <div className="text-center py-8">Loading discussions...</div>
-              ) : error ? (
-                <div className="text-center py-8 text-red-500">{error}</div>
-              ) : discussions.length === 0 ? (
-                <div className="text-center py-8 text-muted">
-                  No discussions yet. Be the first to ask a question!
-                </div>
+        {/* ══════ HERO ══════ */}
+        <div className="relative overflow-hidden bg-linear-to-br from-teal-700 via-teal-600 to-teal-800 pt-16 pb-12 px-4 sm:px-8">
+          {/* grid pattern overlay */}
+          <div
+            className="absolute inset-0 opacity-10"
+            style={{
+              backgroundImage:
+                "linear-gradient(rgba(255,255,255,.15) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.15) 1px, transparent 1px)",
+              backgroundSize: "40px 40px",
+            }}
+          />
+          <div className="relative z-10 max-w-4xl mx-auto text-center space-y-4">
+            <h1 className="text-3xl sm:text-5xl font-extrabold text-white">
+              {activeView === "courseCommunity" ? (
+                <>
+                  Course <span className="text-yellow-400">Communities</span>
+                </>
               ) : (
-                discussions.map((discussion) => (
-                  <div
-                    key={discussion._id}
-                    className="bg-card rounded-xl border border-border p-4 sm:p-6 shadow-sm"
-                  >
-                    {/* Discussion Header */}
-                    <div className="flex items-start space-x-3 sm:space-x-4 mb-4">
-                      <img
-                        src="/ui/avatar-4.png"
-                        alt={discussion.user.name}
-                        className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-col sm:flex-row sm:items-center space-y-1 sm:space-y-0 sm:space-x-2 mb-1">
-                          <span className="font-medium text-main">
-                            {discussion.user.name}
-                          </span>
-                          <div className="flex items-center space-x-2">
-                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                              Beginner
-                            </span>
-                            <span className="text-sm text-muted">
-                              {new Date(discussion.createdAt).toLocaleString()}
-                            </span>
-                          </div>
-                        </div>
-                        <h3 className="text-lg font-medium text-main mb-2">
-                          {discussion.title}
-                        </h3>
-                        <p className="text-muted mb-4">
-                          {discussion.description}
-                        </p>
-                        <div className="flex flex-wrap items-center gap-4 sm:gap-6">
-                          <button className="flex items-center space-x-2 text-muted hover:text-red-500">
-                            <Heart className="w-4 h-4" />
-                            <span className="text-sm">
-                              {discussion.likes.length}
-                            </span>
-                          </button>
-                          <button className="flex items-center space-x-2 text-muted hover:text-blue-500">
-                            <Reply className="w-4 h-4" />
-                            <span className="text-sm">
-                              {discussion.replies.length} replies
-                            </span>
-                          </button>
-                          <button className="flex items-center space-x-2 text-muted hover:text-yellow-500">
-                            <Bookmark className="w-4 h-4" />
-                            <span className="text-sm">Save</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                <>
+                  Global <span className="text-orange-400">Discussions</span>
+                </>
+              )}
+            </h1>
+            <p className="text-teal-100 text-sm sm:text-base max-w-xl mx-auto">
+              Join discussions, share insights, and connect with others
+            </p>
+            {/* Tabs */}
+            <div className="flex justify-center gap-3 pt-2">
+              <button
+                onClick={() => setActiveView("courseCommunity")}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-full font-semibold text-sm transition-all ${
+                  activeView === "courseCommunity"
+                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/30"
+                    : "bg-black/30 text-white hover:bg-black/40"
+                }`}
+              >
+                <BookOpen className="w-4 h-4" />
+                Course Communities
+              </button>
+              <button
+                onClick={() => setActiveView("global")}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-full font-semibold text-sm transition-all ${
+                  activeView === "global"
+                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/30"
+                    : "bg-black/30 text-white hover:bg-black/40"
+                }`}
+              >
+                <Users className="w-4 h-4" />
+                Global
+              </button>
+            </div>
+          </div>
+        </div>
 
-                    {/* AI Suggestion */}
-                    {discussion.hasAISuggestion && (
-                      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
-                        <div className="flex items-start space-x-3">
-                          <div className="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-full p-2">
-                            <Bot className="w-4 h-4 text-white" />
-                          </div>
-                          <div className="flex-1">
-                            <h4 className="font-medium text-main mb-1">
-                              AI Suggestion
-                            </h4>
-                            <p className="text-sm text-muted">
-                              {discussion.aiSuggestion.text}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+        {/* ══════ BODY ══════ */}
+        <div className="flex-1 flex relative">
+          {/* ░░░░░ COURSE COMMUNITY VIEW ░░░░░ */}
+          {activeView === "courseCommunity" && (
+            <main className="flex-1 p-4 sm:p-6 overflow-y-auto">
+              <div className={`max-w-5xl mx-auto ${selectedCourse ? "xl:mr-105" : ""}`}>
+                {/* header row */}
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-2">
+                    <MessageCircle className="w-5 h-5 text-indigo-500" />
+                    <h2 className="text-xl font-bold text-main">
+                      Recent Discussions{" "}
+                      <span className="text-muted font-normal text-base">({coursePosts.length})</span>
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-muted" />
+                    {["Recent", "Popular"].map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setCourseSort(s)}
+                        className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                          courseSort === s
+                            ? "bg-red-500 text-white"
+                            : "bg-card border border-border text-muted hover:text-main"
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-                    {/* Responses */}
-                    {discussion.replies &&
-                      discussion.replies.map((reply, index) => (
-                        <div
-                          key={index}
-                          className="ml-4 sm:ml-8 border-l-2 border-border pl-4 sm:pl-6 mb-4"
+                {/* grid of discussion cards */}
+                {coursePostsLoading ? (
+                  <div className="text-center py-12 text-muted">Loading discussions...</div>
+                ) : coursePosts.length === 0 ? (
+                  <div className="text-center py-12 text-muted">
+                    No course discussions yet. Click a course below to start one!
+                    <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {allCourses.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() =>
+                            setSelectedCourse({ courseId: c.id, courseName: c.title })
+                          }
+                          className="bg-card border border-border rounded-xl p-4 text-left hover:border-indigo-500 transition-colors"
                         >
-                          <div className="flex items-start space-x-3">
-                            <img
-                              src="/ui/avatar-4.png"
-                              alt={reply.user.name}
-                              className="w-6 h-6 sm:w-8 sm:h-8 rounded-full flex-shrink-0"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex flex-col sm:flex-row sm:items-center space-y-1 sm:space-y-0 sm:space-x-2 mb-1">
-                                <span className="font-medium text-main">
-                                  {reply.user.name}
-                                </span>
-                                <div className="flex items-center space-x-2">
-                                  <span className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                    Beginner
-                                  </span>
-                                  <span className="text-sm text-muted">
-                                    {new Date(reply.createdAt).toLocaleString()}
-                                  </span>
-                                </div>
-                              </div>
-                              <p className="text-muted mb-2">{reply.text}</p>
-                              <div className="flex items-center space-x-4">
-                                <button className="flex items-center space-x-1 text-muted hover:text-red-500">
-                                  <Heart className="w-3 h-3" />
-                                  <span className="text-xs">
-                                    {reply.likes.length}
-                                  </span>
-                                </button>
-                                <button className="text-xs text-muted hover:text-blue-500">
-                                  Reply
-                                </button>
-                              </div>
+                          <h3 className="font-semibold text-main">{c.title}</h3>
+                          <p className="text-xs text-muted mt-1">{c.category}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {coursePosts.map((post) => (
+                        <div
+                          key={post.id}
+                          onClick={() =>
+                            setSelectedCourse({
+                              courseId: post.courseId,
+                              courseName: courseNameForPost(post),
+                            })
+                          }
+                          className="bg-card border border-border rounded-xl p-5 shadow-sm hover:border-indigo-500/50 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-start gap-3 mb-3">
+                            <div
+                              className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 ${pickColor(
+                                post.author?.name
+                              )}`}
+                            >
+                              {getInitial(post.author?.name)}
                             </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-main text-sm">
+                                  {post.author?.name || "Unknown"}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-600 text-white truncate max-w-35">
+                                  {courseNameForPost(post)}
+                                </span>
+                              </div>
+                              <span className="text-xs text-muted">
+                                {getRelativeTime(post.createdAt)}
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-sm text-muted line-clamp-2 mb-3">
+                            {post.content}
+                          </p>
+                          <div className="border-t border-border pt-3 flex items-center gap-4 text-muted text-xs">
+                            <span className="flex items-center gap-1">
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                              {post.likes?.length || 0}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              {post.replies?.length || 0}
+                            </span>
                           </div>
                         </div>
                       ))}
+                    </div>
 
-                    {/* Reply Input */}
-                    <div className="ml-4 sm:ml-8 flex items-start space-x-3">
-                      <img
-                        src="/ui/avatar-4.png"
-                        alt="Your avatar"
-                        className="w-6 h-6 sm:w-8 sm:h-8 rounded-full flex-shrink-0"
-                      />
-                      <div className="flex-1">
-                        <textarea
-                          placeholder="Write your reply..."
-                          value={replyText}
-                          onChange={(e) => setReplyText(e.target.value)}
-                          rows={3}
-                          className="w-full px-3 py-2 bg-input border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-none text-sm text-main placeholder-muted"
-                        />
-                        <div className="flex justify-end mt-2">
+                    {/* quick-start: select a course to start new discussion */}
+                    <div className="mt-8">
+                      <h3 className="text-sm font-semibold text-muted mb-3 uppercase tracking-wide">
+                        Start a discussion in a course
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {allCourses.map((c) => (
                           <button
-                            onClick={() => handleReply(discussion._id)}
-                            className="px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-medium rounded-lg hover:opacity-90 transition-opacity"
+                            key={c.id}
+                            onClick={() =>
+                              setSelectedCourse({ courseId: c.id, courseName: c.title })
+                            }
+                            className="px-4 py-2 bg-card border border-border rounded-lg text-sm text-main hover:border-indigo-500 transition-colors"
                           >
-                            Reply
+                            {c.title}
                           </button>
-                        </div>
+                        ))}
                       </div>
                     </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </main>
+                  </>
+                )}
+              </div>
 
-        {/* My Courses Sidebar */}
-        <aside className="w-80 mt-8 bg-card border-l border-border p-6 hidden xl:block">
-          <h2 className="text-xl font-bold text-main mb-6">My courses</h2>
-          <div className="space-y-4">
-            {myCourses.map((course, index) => (
-              <div
-                key={index}
-                className={`rounded-xl p-4 border shadow-sm ${
-                  course.isActive
-                    ? "bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-800"
-                    : "bg-card border-border"
-                }`}
-              >
-                <div className="flex items-center space-x-3">
-                  <img
-                    src={course.image}
-                    alt={course.title}
-                    className="w-16 h-16 rounded-lg object-cover"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-medium text-main mb-1">
-                      {course.title}
-                    </h3>
-                    <p className="text-sm text-muted mb-2">
-                      {course.subtitle}
-                    </p>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted">{course.lessons}</span>
-                      <span className="text-muted">{course.progress}%</span>
+              {/* ── SIDE PANEL (course community) ── */}
+              {selectedCourse && (
+                <div
+                  ref={panelRef}
+                  className="fixed top-0 right-0 h-full w-full sm:w-100 bg-card border-l border-border shadow-2xl z-50 flex flex-col"
+                >
+                  {/* panel header */}
+                  <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <MessageCircle className="w-5 h-5 text-indigo-500" />
+                        <h3 className="font-bold text-main">Community</h3>
+                      </div>
+                      <p className="text-xs text-muted mt-0.5">
+                        {selectedCourse.courseName} &bull; {panelPosts.length} messages
+                      </p>
                     </div>
-                    <div className="w-full bg-input rounded-full h-2 mt-2">
-                      <div
-                        className={`h-2 rounded-full ${course.progressColor}`}
-                        style={{ width: `${course.progress}%` }}
-                      ></div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => fetchPanelPosts(selectedCourse.courseId, panelSort)}
+                        className="p-1.5 rounded-lg hover:bg-canvas-alt text-muted"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => setSelectedCourse(null)}
+                        className="p-1.5 rounded-lg hover:bg-canvas-alt text-muted"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* panel sort tabs */}
+                  <div className="flex border-b border-border shrink-0">
+                    {["Recent", "Popular"].map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setPanelSort(s)}
+                        className={`flex-1 py-2.5 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                          panelSort === s
+                            ? "bg-indigo-600/10 text-indigo-500 border-b-2 border-indigo-500"
+                            : "text-muted hover:text-main"
+                        }`}
+                      >
+                        {s === "Recent" ? <Clock className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* panel messages */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {panelLoading ? (
+                      <div className="text-center py-8 text-muted text-sm">Loading...</div>
+                    ) : panelPosts.length === 0 ? (
+                      <div className="text-center py-8 text-muted text-sm">
+                        No messages yet. Be the first to share!
+                      </div>
+                    ) : (
+                      panelPosts.map((post) => (
+                        <div key={post.id} className="space-y-2">
+                          <div className="flex items-start gap-3">
+                            <div
+                              className={`w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-xs shrink-0 ${pickColor(
+                                post.author?.name
+                              )}`}
+                            >
+                              {getInitial(post.author?.name)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-semibold text-main text-sm">
+                                    {post.author?.name || "Unknown"}
+                                  </span>
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-600/20 text-indigo-400 flex items-center gap-0.5">
+                                    <Users className="w-2.5 h-2.5" />
+                                    {courseNameForPost(post)}
+                                  </span>
+                                  <span className="text-[11px] text-muted">
+                                    {getRelativeTime(post.createdAt)}
+                                  </span>
+                                </div>
+                                <button className="text-muted hover:text-main p-0.5">
+                                  <MoreVertical className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <p className="text-sm text-muted mt-1">{post.content}</p>
+                              <div className="flex items-center gap-4 mt-2 text-xs text-muted">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleLike(post.id, "panel");
+                                  }}
+                                  className={`flex items-center gap-1 hover:text-indigo-500 ${
+                                    post.likes?.some((l) => l.userId === user?.id)
+                                      ? "text-indigo-500"
+                                      : ""
+                                  }`}
+                                >
+                                  <ThumbsUp className="w-3.5 h-3.5" />
+                                  {post.likes?.length || 0}
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDislike(post.id, "panel");
+                                  }}
+                                  className={`flex items-center gap-1 hover:text-red-500 ${
+                                    post.dislikes?.some((d) => d.userId === user?.id)
+                                      ? "text-red-500"
+                                      : ""
+                                  }`}
+                                >
+                                  <ThumbsDown className="w-3.5 h-3.5" />
+                                  {post.dislikes?.length || 0}
+                                </button>
+                                <span className="hover:text-main cursor-pointer">Reply</span>
+                              </div>
+
+                              {/* Replies */}
+                              {post.replies?.length > 0 && (
+                                <div className="mt-3 space-y-2 border-l-2 border-border pl-3">
+                                  {post.replies.map((r) => (
+                                    <div key={r.id} className="flex items-start gap-2">
+                                      <div
+                                        className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 ${pickColor(
+                                          r.userName
+                                        )}`}
+                                      >
+                                        {getInitial(r.userName)}
+                                      </div>
+                                      <div>
+                                        <span className="text-xs font-medium text-main">
+                                          {r.userName || "Unknown"}
+                                        </span>
+                                        <span className="text-[10px] text-muted ml-2">
+                                          {getRelativeTime(r.createdAt)}
+                                        </span>
+                                        <p className="text-xs text-muted mt-0.5">{r.text}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* panel input */}
+                  <div className="p-3 border-t border-border shrink-0">
+                    <div className="flex items-center gap-2">
+                      <Smile className="w-5 h-5 text-muted shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="Share your thoughts..."
+                        value={panelReplyText}
+                        onChange={(e) => {
+                          if (e.target.value.length <= 1000) setPanelReplyText(e.target.value);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            handlePanelPost(panelReplyText);
+                          }
+                        }}
+                        className="flex-1 px-3 py-2 bg-input border border-border rounded-lg text-sm text-main placeholder-muted focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                        onClick={() => handlePanelPost(panelReplyText)}
+                        className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-1.5"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        Send
+                      </button>
+                    </div>
+                    <div className="text-right text-[11px] text-muted mt-1">
+                      {panelReplyText.length}/1000 characters
                     </div>
                   </div>
                 </div>
+              )}
+            </main>
+          )}
+
+          {/* ░░░░░ GLOBAL COMMUNITY VIEW ░░░░░ */}
+          {activeView === "global" && (
+            <main className="flex-1 p-4 sm:p-6 overflow-y-auto">
+              <div className="max-w-4xl mx-auto space-y-6">
+                {/* Welcome Banner */}
+                <div className="bg-linear-to-r from-red-900/30 to-orange-900/30 border border-orange-500/30 rounded-xl p-5">
+                  <div className="flex items-start gap-3">
+                    <div className="w-12 h-12 rounded-full bg-linear-to-br from-orange-500 to-red-500 flex items-center justify-center shrink-0">
+                      <Users className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-main text-lg">
+                        Welcome to Global Discussion!
+                      </h3>
+                      <p className="text-muted text-sm mt-1">
+                        Connect, share insights, find partners, and discuss
+                        anything globally.
+                      </p>
+                      <button className="mt-2 text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1">
+                        <ArrowRight className="w-3 h-3" />
+                        Community Guidelines
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Post Composer */}
+                <form
+                  onSubmit={handleGlobalPost}
+                  className="bg-card border border-border rounded-xl p-5 shadow-sm"
+                >
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 ${pickColor(
+                        user?.name
+                      )}`}
+                    >
+                      {getInitial(user?.name)}
+                    </div>
+                    <textarea
+                      value={globalContent}
+                      onChange={(e) => {
+                        if (e.target.value.length <= 1000) setGlobalContent(e.target.value);
+                      }}
+                      placeholder="What's on your mind? Share insights, ask questions, or start a discussion about courses..."
+                      rows={4}
+                      className="flex-1 px-4 py-3 bg-input border border-border rounded-lg text-sm text-main placeholder-muted focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between mt-3 flex-wrap gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <select
+                          value={globalCategory}
+                          onChange={(e) => setGlobalCategory(e.target.value)}
+                          className="appearance-none pl-3 pr-8 py-2 bg-input border border-border rounded-lg text-sm text-muted focus:outline-none focus:ring-2 focus:ring-orange-500 cursor-pointer"
+                        >
+                          <option value="">Select Category *</option>
+                          {GLOBAL_CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-4 h-4 text-muted absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                      <span
+                        className={`text-sm ${
+                          globalContent.length > 900 ? "text-red-400" : "text-muted"
+                        }`}
+                      >
+                        {globalContent.length}/1000
+                      </span>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={!globalContent.trim() || !globalCategory}
+                      className="px-6 py-2.5 bg-linear-to-r from-orange-500 to-red-500 text-white font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Send className="w-4 h-4" />
+                      Post
+                    </button>
+                  </div>
+                </form>
+
+                {/* Global Discussions List Header */}
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-2">
+                    <MessageCircle className="w-5 h-5 text-orange-500" />
+                    <h2 className="text-xl font-bold text-main">
+                      Global Discussions{" "}
+                      <span className="text-muted font-normal text-base">({globalPosts.length})</span>
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <select
+                        value={globalCategoryFilter}
+                        onChange={(e) => setGlobalCategoryFilter(e.target.value)}
+                        className="appearance-none pl-3 pr-8 py-1.5 bg-card border border-border rounded-lg text-sm text-muted focus:outline-none cursor-pointer"
+                      >
+                        <option>All Categories</option>
+                        {GLOBAL_CATEGORIES.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-4 h-4 text-muted absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                    <TrendingUp className="w-4 h-4 text-muted" />
+                    {["Recent", "Popular"].map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setGlobalSort(s)}
+                        className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                          globalSort === s
+                            ? "bg-red-500 text-white"
+                            : "bg-card border border-border text-muted hover:text-main"
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Global Posts */}
+                {globalLoading ? (
+                  <div className="text-center py-12 text-muted">Loading discussions...</div>
+                ) : globalPosts.length === 0 ? (
+                  <div className="text-center py-12 text-muted">
+                    No global discussions yet. Be the first to start one!
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {globalPosts.map((post) => (
+                      <div
+                        key={post.id}
+                        className="bg-card border border-border rounded-xl p-5 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-start gap-3">
+                            <div
+                              className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 ${pickColor(
+                                post.author?.name
+                              )}`}
+                            >
+                              {getInitial(post.author?.name)}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-main text-sm">
+                                {post.author?.name || "Unknown"}
+                              </div>
+                              <div className="text-xs text-muted">
+                                {post.createdAt
+                                  ? new Date(post.createdAt).toLocaleDateString()
+                                  : ""}
+                              </div>
+                            </div>
+                          </div>
+                          {post.category && (
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-medium border ${
+                                categoryColorMap[post.category] ||
+                                "border-gray-500 text-gray-400"
+                              }`}
+                            >
+                              {post.category}
+                            </span>
+                          )}
+                        </div>
+
+                        <p className={`text-sm text-muted mb-4 ${expandedGlobalPost === post.id ? "" : "line-clamp-2"}`}>
+                          {post.content}
+                        </p>
+
+                        <div className="border-t border-border pt-3 flex items-center justify-between">
+                          <div className="flex items-center gap-5 text-xs text-muted">
+                            <button
+                              onClick={() => handleLike(post.id, "global")}
+                              className={`flex items-center gap-1 hover:text-indigo-500 transition-colors ${
+                                post.likes?.some((l) => l.userId === user?.id)
+                                  ? "text-indigo-500"
+                                  : ""
+                              }`}
+                            >
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                              {post.likes?.length || 0}
+                            </button>
+                            <button
+                              onClick={() => handleDislike(post.id, "global")}
+                              className={`flex items-center gap-1 hover:text-red-500 transition-colors ${
+                                post.dislikes?.some((d) => d.userId === user?.id)
+                                  ? "text-red-500"
+                                  : ""
+                              }`}
+                            >
+                              <ThumbsDown className="w-3.5 h-3.5" />
+                              {post.dislikes?.length || 0}
+                            </button>
+                            <span className="flex items-center gap-1">
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              {post.replies?.length || 0}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() =>
+                                setExpandedGlobalPost(
+                                  expandedGlobalPost === post.id ? null : post.id
+                                )
+                              }
+                              className="px-3 py-1.5 border border-purple-500 text-purple-400 text-xs font-medium rounded-lg hover:bg-purple-500/10 transition-colors flex items-center gap-1"
+                            >
+                              <ArrowRight className="w-3 h-3" />
+                              {expandedGlobalPost === post.id ? "Collapse" : "View Replies"}
+                            </button>
+                            <button className="text-muted hover:text-main p-1">
+                              <Flag className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expanded: show replies + reply input */}
+                        {expandedGlobalPost === post.id && (
+                          <div className="mt-4 space-y-3 border-t border-border pt-4">
+                            {post.replies?.length > 0 && (
+                              <div className="space-y-3 pl-3 border-l-2 border-border">
+                                {post.replies.map((r) => (
+                                  <div key={r.id} className="flex items-start gap-2">
+                                    <div
+                                      className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 ${pickColor(
+                                        r.userName
+                                      )}`}
+                                    >
+                                      {getInitial(r.userName)}
+                                    </div>
+                                    <div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-medium text-main">
+                                          {r.userName || "Unknown"}
+                                        </span>
+                                        <span className="text-[10px] text-muted">
+                                          {getRelativeTime(r.createdAt)}
+                                        </span>
+                                      </div>
+                                      <p className="text-xs text-muted mt-0.5">{r.text}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                placeholder="Write a reply..."
+                                value={globalReplyText}
+                                onChange={(e) => setGlobalReplyText(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleReplySubmit(post.id, globalReplyText, "global");
+                                    setGlobalReplyText("");
+                                  }
+                                }}
+                                className="flex-1 px-3 py-2 bg-input border border-border rounded-lg text-sm text-main placeholder-muted focus:outline-none focus:ring-2 focus:ring-orange-500"
+                              />
+                              <button
+                                onClick={() => {
+                                  handleReplySubmit(post.id, globalReplyText, "global");
+                                  setGlobalReplyText("");
+                                }}
+                                className="px-4 py-2 bg-linear-to-r from-orange-500 to-red-500 text-white text-sm font-medium rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                                Reply
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-        </aside>
+            </main>
+          )}
+        </div>
       </div>
     </div>
   );

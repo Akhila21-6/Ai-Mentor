@@ -1,3 +1,4 @@
+// frontend/src/pages/Settings.jsx
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import Header from "../components/Header";
@@ -13,6 +14,7 @@ import {
   EyeOff,
 } from "lucide-react";
 import axios from "axios";
+import { useTheme } from "../context/ThemeContext";
 
 const settingsNavItems = [
   { icon: User, label: "Profile" },
@@ -23,10 +25,13 @@ const settingsNavItems = [
 ];
 
 export default function Settings() {
+  const [originalNotifications, setOriginalNotifications] = useState(null);
+  const { theme, setTheme } = useTheme();
+  const [avatarFile, setAvatarFile] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeSetting, setActiveSetting] = useState("Profile");
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, fetchUserProfile  } = useAuth();
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -51,6 +56,7 @@ export default function Settings() {
   });
   const [loading, setLoading] = useState(false);
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [profilepopup, setProfilePopup] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [passwordData, setPasswordData] = useState({
     currentPassword: "",
@@ -66,25 +72,39 @@ export default function Settings() {
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const response = await axios.put(
-        "/api/users/profile",
-        {
-          firstName: formData.firstName,
-          lastName: formData.lastName,
-          email: formData.email,
-          bio: formData.bio,
+      const form = new FormData();
+      form.append("firstName", formData.firstName);
+      form.append("lastName", formData.lastName);
+      form.append("email", formData.email);
+      form.append("bio", formData.bio);
+
+      if (avatarFile) {
+        form.append("avatar", avatarFile);
+      }
+
+      const response = await axios.put("/api/users/profile", form, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "multipart/form-data",
         },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      });
+
+      console.log("✅ Backend response:", response.data);
+
+      // 🔥 FIX 1: Update context FIRST with fresh data
       updateUser(response.data);
-      alert("Profile updated successfully!");
+
+      // 🔥 FIX 2: Wait for state to update, THEN fetch (or skip fetch entirely)
+      setTimeout(async () => {
+        await fetchUserProfile(); // This will now return avatar_url!
+        console.log("🔄 Refetched user:", JSON.parse(localStorage.getItem("user")));
+      }, 500);
+
+      setAvatarFile(null);
+      setProfilePopup(true);
     } catch (error) {
-      console.error("Error updating profile:", error);
-      alert("Failed to update profile. Please try again.");
+      console.error("❌ Error updating profile:", error.response?.data || error);
+      alert("Failed to update profile.");
     } finally {
       setLoading(false);
     }
@@ -101,6 +121,25 @@ export default function Settings() {
           "Passionate about AI and machine learning. Currently pursuing advanced courses in data science.",
       });
     }
+  }, [user]);
+
+  // Fetch current settings on mount
+  useEffect(() => {
+    const fetchNotificationSettings = async () => {
+      if (!user) return;
+      try {
+        const token = localStorage.getItem("token");
+        const { data } = await axios.get("/api/users/settings", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        setSettingsData(data);
+      } catch (err) {
+        console.error("Failed to fetch notification settings:", err);
+      }
+    };
+
+    fetchNotificationSettings();
   }, [user]);
 
   return (
@@ -175,13 +214,26 @@ export default function Settings() {
                     <div className="flex flex-col items-center">
                       <div className="relative mb-6">
                         <img
-                          src={`https://api.dicebear.com/8.x/initials/svg?seed=${formData.firstName}%20${formData.lastName}`}
+                          src={
+                            avatarFile
+                              ? URL.createObjectURL(avatarFile)
+                              : user?.avatar_url
+                                ? user.avatar_url
+                                : `https://api.dicebear.com/8.x/initials/svg?seed=${formData.firstName}%20${formData.lastName}`
+                          }
                           alt="Profile"
                           className="w-32 h-32 rounded-full border-4 border-[rgba(255,135,89,0.65)] shadow-[0_4px_6px_0_rgba(0,0,0,0.10),0_10px_15px_0_rgba(0,0,0,0.10)]"
                         />
-                        <button className="absolute bottom-2 right-2 w-10 h-10 bg-[#475569] rounded-full flex items-center justify-center shadow-[0_4px_6px_0_rgba(0,0,0,0.10),0_10px_15px_0_rgba(0,0,0,0.10)]">
+
+                        <label className="absolute bottom-2 right-2 w-10 h-10 bg-[#475569] rounded-full flex items-center justify-center cursor-pointer shadow-[0_4px_6px_0_rgba(0,0,0,0.10),0_10px_15px_0_rgba(0,0,0,0.10)]">
                           <Camera className="w-[14px] h-[14px] text-white" />
-                        </button>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            hidden
+                            onChange={(e) => setAvatarFile(e.target.files[0])}
+                          />
+                        </label>
                       </div>
                       <h2 className="text-[20px] font-semibold text-main font-[Inter] mb-1">
                         {formData.firstName} {formData.lastName}
@@ -284,127 +336,48 @@ export default function Settings() {
                     Choose how you want to be notified about updates
                   </p>
                 </div>
-                <div className="bg-card rounded-[24px] shadow-[0_4px_6px_0_rgba(0,0,0,0.10),0_10px_15px_0_rgba(0,0,0,0.10)] p-8">
+                <div className="bg-card rounded-[24px] shadow p-8">
                   <div className="space-y-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-[16px] font-semibold text-main font-[Inter]">
-                          Email Notifications
-                        </h3>
-                        <p className="text-[14px] text-muted font-[Inter]">
-                          Receive notifications via email
-                        </p>
+                    {[
+                      { label: "Email Notifications", key: "emailNotifications", desc: "Receive notifications via email" },
+                      { label: "Push Notifications", key: "pushNotifications", desc: "Receive push notifications in your browser" },
+                      { label: "Course Updates", key: "courseUpdates", desc: "Get notified about new lessons and course updates" },
+                      { label: "Discussion Replies", key: "discussionReplies", desc: "Get notified when someone replies to your discussions" },
+                    ].map((item) => (
+                      <div key={item.key} className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-[16px] font-semibold text-main">{item.label}</h3>
+                          <p className="text-[14px] text-muted">{item.desc}</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={settingsData.notifications[item.key]}
+                            onChange={(e) =>
+                              setSettingsData((prev) => ({
+                                ...prev,
+                                notifications: {
+                                  ...prev.notifications,
+                                  [item.key]: e.target.checked,
+                                },
+                              }))
+                            }
+                            className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                        </label>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={
-                            settingsData.notifications.emailNotifications
-                          }
-                          onChange={(e) =>
-                            setSettingsData((prev) => ({
-                              ...prev,
-                              notifications: {
-                                ...prev.notifications,
-                                emailNotifications: e.target.checked,
-                              },
-                            }))
-                          }
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/25 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                      </label>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-[16px] font-semibold text-main font-[Inter]">
-                          Push Notifications
-                        </h3>
-                        <p className="text-[14px] text-muted font-[Inter]">
-                          Receive push notifications in your browser
-                        </p>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={settingsData.notifications.pushNotifications}
-                          onChange={(e) =>
-                            setSettingsData((prev) => ({
-                              ...prev,
-                              notifications: {
-                                ...prev.notifications,
-                                pushNotifications: e.target.checked,
-                              },
-                            }))
-                          }
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/25 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                      </label>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-[16px] font-semibold text-main font-[Inter]">
-                          Course Updates
-                        </h3>
-                        <p className="text-[14px] text-muted font-[Inter]">
-                          Get notified about new lessons and course updates
-                        </p>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={settingsData.notifications.courseUpdates}
-                          onChange={(e) =>
-                            setSettingsData((prev) => ({
-                              ...prev,
-                              notifications: {
-                                ...prev.notifications,
-                                courseUpdates: e.target.checked,
-                              },
-                            }))
-                          }
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/25 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                      </label>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-[16px] font-semibold text-main font-[Inter]">
-                          Discussion Replies
-                        </h3>
-                        <p className="text-[14px] text-muted font-[Inter]">
-                          Get notified when someone replies to your discussions
-                        </p>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={settingsData.notifications.discussionReplies}
-                          onChange={(e) =>
-                            setSettingsData((prev) => ({
-                              ...prev,
-                              notifications: {
-                                ...prev.notifications,
-                                discussionReplies: e.target.checked,
-                              },
-                            }))
-                          }
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/25 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                      </label>
-                    </div>
+                    ))}
                   </div>
 
                   <div className="flex justify-end gap-4 pt-6 border-t border-border mt-6">
                     <button
                       type="button"
-                      className="h-[50px] px-6 rounded-xl border border-border bg-card text-main text-[16px] font-medium font-[Inter] hover:bg-canvas-alt"
+                      onClick={() => {
+                        if (originalNotifications)
+                          setSettingsData((prev) => ({ ...prev, notifications: originalNotifications }));
+                      }}
+                      className="h-[50px] px-6 rounded-xl border border-border bg-card text-main hover:bg-canvas-alt"
                     >
                       Cancel
                     </button>
@@ -413,12 +386,18 @@ export default function Settings() {
                         setLoading(true);
                         try {
                           const token = localStorage.getItem("token");
+            
                           await axios.put(
                             "/api/users/settings",
-                            { notifications: settingsData.notifications },
+                            {
+                              notifications: { ...settingsData.notifications },
+                            },
                             { headers: { Authorization: `Bearer ${token}` } }
                           );
+
+
                           alert("Notification settings updated successfully!");
+                          setOriginalNotifications({ ...settingsData.notifications });
                         } catch (error) {
                           console.error("Error updating settings:", error);
                           alert("Failed to update settings. Please try again.");
@@ -427,7 +406,7 @@ export default function Settings() {
                         }
                       }}
                       disabled={loading}
-                      className="h-[50px] px-6 rounded-xl bg-gradient-to-r from-primary to-primary text-white text-[16px] font-medium font-[Inter] hover:opacity-90 disabled:opacity-50"
+                      className="h-[50px] px-6 rounded-xl bg-gradient-to-r from-primary to-primary text-white hover:opacity-90 disabled:opacity-50"
                     >
                       {loading ? "Saving..." : "Save Changes"}
                     </button>
@@ -662,17 +641,9 @@ export default function Settings() {
                         ].map((theme) => (
                           <button
                             key={theme.value}
-                            onClick={() =>
-                              setSettingsData((prev) => ({
-                                ...prev,
-                                appearance: {
-                                  ...prev.appearance,
-                                  theme: theme.value,
-                                },
-                              }))
-                            }
+                            onClick={() => setTheme(theme.value)}
                             className={`p-4 rounded-xl border-2 transition-colors ${
-                              settingsData.appearance.theme === theme.value
+                              theme === theme.value
                                 ? "border-primary bg-teal-50 dark:bg-teal-900/20 text-main"
                                 : "border-border hover:border-primary text-muted hover:text-main"
                             }`}
@@ -832,6 +803,41 @@ export default function Settings() {
                   </div>
                 </div>
               </div>
+            )}
+            //=== Profile Popup======//
+            {profilepopup && (
+               <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-55 animate-fadeIn">
+
+               <div className="relative bg-gradient-to-br from-white to-slate-100 dark:from-slate-800 dark:to-slate-900 
+                   rounded-3xl p-10 w-[420px] text-center shadow-2xl border border-slate-200 
+                   dark:border-slate-700 transform transition-all duration-300 scale-100 animate-popup">
+
+                 {/* Animated Success Circle */}
+                 <div className="mx-auto mb-6 w-20 h-20 flex items-center justify-center 
+                     rounded-full bg-gradient-to-r from-emerald-400 to-green-500 
+                     shadow-lg animate-bounce">
+                   <span className="text-4xl text-white">✓</span>
+                 </div>
+
+                 {/* Heading */}
+                 <h2 className="text-2xl font-bold bg-gradient-to-r from-emerald-500 to-teal-500 
+                    bg-clip-text text-transparent mb-3">
+                   Profile Updated Successfully!
+                 </h2>
+
+                 {/* Action Button */}
+                 <button
+                   onClick={() => setProfilePopup(false)}
+                   className="px-8 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 
+                  text-white rounded-2xl font-semibold 
+                  shadow-lg hover:scale-105 hover:shadow-emerald-400/40 
+                  transition-all duration-300"
+                 >
+                   Ok
+                 </button>
+
+               </div>
+             </div>
             )}
           </main>
         </div>

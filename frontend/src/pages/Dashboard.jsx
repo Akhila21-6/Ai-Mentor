@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import Header from "../components/Header";
 import Sidebar from "../components/Sidebar";
 import { useAuth } from "../context/AuthContext";
+import { useSidebar } from "../context/SidebarContext";
 import {
   Search,
   Bell,
@@ -24,8 +25,7 @@ import {
 } from "lucide-react";
 
 const Dashboard = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const { sidebarOpen, setSidebarOpen, sidebarCollapsed, setSidebarCollapsed } = useSidebar();
   const [coursesData, setCoursesData] = useState({
     statsCards: [],
     allCourses: [],
@@ -128,12 +128,15 @@ const Dashboard = () => {
     user.purchasedCourses.forEach((purchasedCourse) => {
       // Find the course in allCourses to get lesson count
       const courseInfo = coursesData.allCourses.find(
-        (c) => c.id === purchasedCourse.courseId,
+        (c) => c.id == purchasedCourse.courseId,
       );
       if (courseInfo) {
-        const totalLessons = courseInfo.lessons
-          ? parseInt(courseInfo.lessons.split(" ")[0])
-          : 0;
+        const totalLessons = courseInfo.lessonsCount ||
+          (courseInfo.lessons ?
+            (courseInfo.lessons.includes(" of ")
+              ? parseInt(courseInfo.lessons.split(" of ")[1])
+              : parseInt(courseInfo.lessons.split(" ")[0]))
+            : 0);
         const completedLessons =
           purchasedCourse.progress?.completedLessons?.length || 0;
 
@@ -177,16 +180,19 @@ const Dashboard = () => {
   const myCourses = coursesData.allCourses
     .filter((course) =>
       user?.purchasedCourses?.some(
-        (purchased) => purchased.courseId === course.id,
+        (purchased) => purchased.courseId == course.id,
       ),
     )
     .map((course) => {
       const purchasedCourse = user?.purchasedCourses?.find(
-        (p) => p.courseId === course.id,
+        (p) => p.courseId == course.id,
       );
-      const totalLessons = course.lessons
-        ? parseInt(course.lessons.split(" ")[0])
-        : 0;
+      const totalLessons = course.lessonsCount ||
+        (course.lessons ?
+          (course.lessons.includes(" of ")
+            ? parseInt(course.lessons.split(" of ")[1])
+            : parseInt(course.lessons.split(" ")[0]))
+          : 0);
       const completedLessons =
         purchasedCourse?.progress?.completedLessons?.length || 0;
 
@@ -222,16 +228,19 @@ const Dashboard = () => {
   const continueLearning = coursesData.allCourses
     .filter((course) =>
       user?.purchasedCourses?.some(
-        (purchased) => purchased.courseId === course.id,
+        (purchased) => purchased.courseId == course.id,
       ),
     )
     .filter((course) => {
       const purchasedCourse = user?.purchasedCourses?.find(
-        (p) => p.courseId === course.id,
+        (p) => p.courseId == course.id,
       );
-      const totalLessons = course.lessons
-        ? parseInt(course.lessons.split(" ")[0])
-        : 0;
+      const totalLessons = course.lessonsCount ||
+        (course.lessons ?
+          (course.lessons.includes(" of ")
+            ? parseInt(course.lessons.split(" of ")[1])
+            : parseInt(course.lessons.split(" ")[0]))
+          : 0);
       const completedLessons =
         purchasedCourse?.progress?.completedLessons?.length || 0;
       return completedLessons > 0 && completedLessons < totalLessons;
@@ -241,9 +250,12 @@ const Dashboard = () => {
       const purchasedCourse = user?.purchasedCourses?.find(
         (p) => p.courseId === course.id,
       );
-      const totalLessons = course.lessons
-        ? parseInt(course.lessons.split(" ")[0])
-        : 0;
+      const totalLessons = course.lessonsCount ||
+        (course.lessons ?
+          (course.lessons.includes(" of ")
+            ? parseInt(course.lessons.split(" of ")[1])
+            : parseInt(course.lessons.split(" ")[0]))
+          : 0);
       const completedLessons =
         purchasedCourse?.progress?.completedLessons?.length || 0;
       const progress =
@@ -288,18 +300,11 @@ const Dashboard = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-canvas-alt flex flex-col">
-        <Header sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
-        <Sidebar
-          sidebarOpen={sidebarOpen}
-          setSidebarOpen={setSidebarOpen}
-          sidebarCollapsed={sidebarCollapsed}
-          setSidebarCollapsed={setSidebarCollapsed}
-          activePage="dashboard"
-        />
+        <Header />
+        <Sidebar activePage="dashboard" />
         <div
-          className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${
-            sidebarCollapsed ? "lg:ml-20" : "lg:ml-80"
-          }`}
+          className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${sidebarCollapsed ? "lg:ml-20" : "lg:ml-80"
+            }`}
         >
           <main className="flex-1 mt-10 overflow-x-hidden overflow-y-auto bg-canvas-alt p-6">
             <div className="flex items-center justify-center h-64">
@@ -313,26 +318,19 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-canvas-alt flex flex-col">
-      <Header sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
+      <Header />
 
-      <Sidebar
-        sidebarOpen={sidebarOpen}
-        setSidebarOpen={setSidebarOpen}
-        sidebarCollapsed={sidebarCollapsed}
-        setSidebarCollapsed={setSidebarCollapsed}
-        activePage="dashboard"
-      />
+      <Sidebar activePage="dashboard" />
 
       {/* Main Content */}
       <div
-        className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${
-          sidebarCollapsed ? "lg:ml-20" : "lg:ml-80"
-        }`}
+        className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${sidebarCollapsed ? "lg:ml-20" : "lg:ml-80"
+          }`}
       >
         {/* Header */}
 
         {/* Dashboard Content */}
-        <main className="flex-1 mt-10 overflow-x-hidden overflow-y-auto bg-canvas-alt p-6">
+        <main className="flex-1 mt-3 overflow-x-hidden overflow-y-auto bg-canvas-alt p-6">
           <div className="max-w-7xl pt-16 mx-auto space-y-8">
             {/* Stats Cards */}
             <div className="grid grid-cols-1  sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -637,11 +635,10 @@ const Dashboard = () => {
                   {Array.from({ length: 31 }, (_, i) => (
                     <div
                       key={i + 1}
-                      className={`p-3 text-center text-sm ${
-                        [3, 5, 9, 12, 16, 19, 23].includes(i + 1)
-                          ? "bg-blue-50 dark:bg-blue-100 text-blue-900 rounded-lg"
-                          : "text-main hover:bg-canvas-alt rounded-lg"
-                      }`}
+                      className={`p-3 text-center text-sm ${[3, 5, 9, 12, 16, 19, 23].includes(i + 1)
+                        ? "bg-blue-50 dark:bg-blue-100 text-blue-900 rounded-lg"
+                        : "text-main hover:bg-canvas-alt rounded-lg"
+                        }`}
                     >
                       {i + 1}
                     </div>

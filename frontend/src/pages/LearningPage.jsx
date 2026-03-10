@@ -1,25 +1,36 @@
 import { useState, useRef, useEffect } from "react";
 import Header from "../components/Header";
+import Sidebar from "../components/Sidebar";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useSidebar } from "../context/SidebarContext";
 import { getAIVideo } from "../service/aiService";
 import VideoPlayer from "../components/video/VideoPlayer";
+import AITranscript from "../components/video/AITranscript";
 
 import {
   ChevronLeft,
-  Pause,
-  Play,
-  Volume2,
-  VolumeX,
-  Maximize,
-  Minimize,
   ChevronRight,
   ChevronDown,
   Check,
   Circle,
   FileText,
-  CloudCog,
+  Search,
+  Home,
+  BookOpen,
+  MessageSquare,
+  BarChart3,
+  Settings,
+  Eye,
+  User,
+  X,
+  Sparkles,
 } from "lucide-react";
+
+// Sanitize filename to match backend logic: remove [\\/:*?"<>|], replace spaces with _
+function sanitizeFilename(name) {
+  return name.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, "_");
+}
 
 const getYouTubeVideoId = (url) => {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
@@ -28,23 +39,27 @@ const getYouTubeVideoId = (url) => {
 };
 
 export default function Learning() {
+
+
   const navigate = useNavigate();
   const { id: courseId } = useParams();
   const { user, updateUser } = useAuth();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [learningData, setLearningData] = useState(null);
-  const [expandedModule, setExpandedModule] = useState("module-1");
+  const { sidebarOpen, setSidebarOpen, sidebarCollapsed, setSidebarCollapsed } = useSidebar();
+  const [learningData, setLearningData] = useState(null)
+  const [expandedModule, setExpandedModule] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [celebritySearch, setCelebritySearch] = useState("");
+  const [activeTab, setActiveTab] = useState("transcript");
+  const [isCelebrityModalOpen, setIsCelebrityModalOpen] = useState(false);
 
   const [captions, setCaptions] = useState([]);
   const [activeCaption, setActiveCaption] = useState("");
   const celebrities = ["Salman Khan", "Modi ji", "SRK"];
 
   const celebrityVideoMap = {
-    "Salman Khan": { video: "http://localhost:5000/videos/salman.mp4", vtt: "http://localhost:5000/videos/salman.vtt" },
-    "Modi ji": { video: "http://localhost:5000/videos/modi.mp4", vtt: "http://localhost:5000/videos/modi.vtt" },
-    SRK: { video: "http://localhost:5000/videos/srk.mp4", vtt: "http://localhost:5000/videos/srk.vtt" },
+    "Salman Khan": { video: "/videos/salman.mp4", vtt: "/videos/salman.vtt" },
+    "Modi ji": { video: "/videos/modi.mp4", vtt: "/videos/modi.vtt" },
+    SRK: { video: "/videos/srk.mp4", vtt: "/videos/srk.vtt" },
   };
 
   const [selectedCelebrity, setSelectedCelebrity] = useState(null);
@@ -57,10 +72,18 @@ export default function Learning() {
   const [currentTime, setCurrentTime] = useState(0);
   const [isNavigating, setIsNavigating] = useState(false);
   const [aiVideoUrl, setAiVideoUrl] = useState(null);
+  const [aiTranscript, setAiTranscript] = useState(null);
   const [isAIVideoLoading, setIsAIVideoLoading] = useState(false);
+  const [generatedTextContent, setGeneratedTextContent] = useState("");
 
   const videoRef = useRef(null);
   const playerContainerRef = useRef(null);
+  const transcriptContainerRef = useRef(null);
+  const activeCaptionRef = useRef(null);
+  const modalRef = useRef(null);
+  const lastLessonIdRef = useRef(null);
+  const lastCelebrityRef = useRef(null);
+  const hasRestoredProgressRef = useRef(false);
 
   useEffect(() => {
     const fetchLearningData = async () => {
@@ -69,13 +92,32 @@ export default function Learning() {
         const response = await fetch(`/api/courses/${courseId}/learning`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-
         if (response.ok) {
           const courseData = await response.json();
           setLearningData(courseData);
           const userProgress = user?.purchasedCourses?.find(
             (course) => course.courseId === parseInt(courseId)
           )?.progress;
+
+          let initialLesson = null;
+
+          if (userProgress?.currentLesson?.lessonId) {
+            initialLesson = findFullLesson(userProgress.currentLesson.lessonId);
+          }
+
+          // If no progress or lesson not found, fallback to the course's default currentLesson 
+          // or the very first lesson of the first module
+          if (!initialLesson) {
+            const defaultId = courseData.currentLesson?.id || courseData.modules?.[0]?.lessons?.[0]?.id;
+            initialLesson = findFullLesson(defaultId);
+          }
+
+          if (initialLesson) {
+            courseData.currentLesson = initialLesson;
+          }
+
+          setLearningData(courseData);
+
           if (userProgress) {
             setExpandedModule(userProgress.currentLesson?.moduleTitle || "module-1");
             const currentLesson = userProgress.currentLesson;
@@ -95,7 +137,7 @@ export default function Learning() {
       }
     };
     fetchLearningData();
-  }, [courseId, user, navigate]);
+  }, [courseId]);
 
   const getFallbackData = (courseId) => ({
     course: { id: parseInt(courseId) },
@@ -126,7 +168,33 @@ export default function Learning() {
   });
 
   useEffect(() => {
-    const loadCaptions = async () => {
+    hasRestoredProgressRef.current = false;
+  }, [courseId]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const generateFromText = (d) => {
+      if (!generatedTextContent) return false;
+      const sentences = generatedTextContent
+        .split(/[.!?]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      if (!sentences.length) return false;
+      const timePerSentence = d / sentences.length;
+      setCaptions(sentences.map((text, i) => ({
+        start: i * timePerSentence,
+        end: (i + 1) * timePerSentence,
+        text,
+      })));
+      console.log(`✅ Generated ${sentences.length} captions from AI text`);
+      return true;
+    };
+
+    const loadVTT = async () => {
+      const vttPath = selectedCelebrity ? celebrityVideoMap[selectedCelebrity]?.vtt : null;
+      if (!vttPath) { setCaptions([]); return; }
       try {
         const vttPath =
           (selectedCelebrity && celebrityVideoMap[selectedCelebrity]?.vtt) || "/vdo_subtitles.vtt";
@@ -158,15 +226,49 @@ export default function Learning() {
     const v = videoRef.current;
     if (!v || !learningData?.currentLesson) return;
 
+    const lessonChanged = lastLessonIdRef.current !== learningData.currentLesson.id;
+    const celebrityChanged = lastCelebrityRef.current !== selectedCelebrity;
+
+    if (!lessonChanged && !celebrityChanged && v.src) return;
+
+    lastLessonIdRef.current = learningData.currentLesson.id;
+    lastCelebrityRef.current = selectedCelebrity;
+
     const loadVideo = async () => {
+      setCaptions([]);
+      setActiveCaption("");
+
       if (selectedCelebrity) {
+        const savedData = user?.purchasedCourses
+          ?.find(c => c.courseId === parseInt(courseId))
+          ?.progress?.lessonData?.[learningData.currentLesson.id];
+
+        const hasSavedMatchingContent = savedData?.celebrity === selectedCelebrity && savedData?.generatedTextContent;
+
+        if (hasSavedMatchingContent) {
+          console.log("♻️ Using saved matching AI content, skipping fetch");
+          if (!aiVideoUrl) {
+            setGeneratedTextContent(savedData.generatedTextContent);
+            setAiVideoUrl(savedData.aiVideoUrl);
+          }
+          setIsPlaying(false);
+          return;
+        }
+
+        // Fresh fetch
         setIsAIVideoLoading(true);
+        setGeneratedTextContent("");
+        setAiVideoUrl(null);
+
         try {
           const payload = {
+            courseId: parseInt(courseId),
+            lessonId: learningData.currentLesson.id,
             celebrity: selectedCelebrity.split(" ")[0].toLowerCase(),
             course: learningData?.course?.title || "React JS",
             topic: learningData.currentLesson.title || "Welcome",
           };
+
           const data = await getAIVideo(payload);
           if (data?.videoUrl) {
             setAiVideoUrl(data.videoUrl);
@@ -184,7 +286,9 @@ export default function Learning() {
         } finally {
           setIsAIVideoLoading(false);
         }
+
       } else {
+        // No celebrity — let VideoPlayer handle src via its useEffect
         setIsAIVideoLoading(false);
         const src = learningData.currentLesson.videoUrl;
         if (src) {
@@ -195,7 +299,46 @@ export default function Learning() {
       }
     };
     loadVideo();
-  }, [learningData?.currentLesson, selectedCelebrity]);
+  }, [learningData?.currentLesson?.id, selectedCelebrity]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isFull = !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement
+      );
+      setIsFullscreen(isFull);
+    };
+
+    const events = [
+      "fullscreenchange",
+      "webkitfullscreenchange",
+      "mozfullscreenchange",
+      "MSFullscreenChange"
+    ];
+
+    events.forEach(event => document.addEventListener(event, handleFullscreenChange));
+
+    // Support for iOS video element specifically
+    const video = videoRef.current;
+    if (video) {
+      video.addEventListener('webkitbeginfullscreen', () => setIsFullscreen(true));
+      video.addEventListener('webkitendfullscreen', () => setIsFullscreen(false));
+    }
+
+    return () => {
+      events.forEach(event => document.removeEventListener(event, handleFullscreenChange));
+      if (video) {
+        video.removeEventListener('webkitbeginfullscreen', () => setIsFullscreen(true));
+        video.removeEventListener('webkitendfullscreen', () => setIsFullscreen(false));
+      }
+    };
+  }, [videoRef]);
+
+
+
 
   // ⏳ NEW FEATURE: Auto-save video progress every 10 seconds (BULLETPROOF VERSION)
   useEffect(() => {
@@ -242,6 +385,39 @@ export default function Learning() {
 
   const allLessons = (modules || []).flatMap((module) => module.lessons || []);
   const currentLessonIndex = allLessons.findIndex((lesson) => lesson.id === currentLesson?.id);
+
+  const saveLessonData = async (lessonId, data) => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/users/course-progress", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          courseId: parseInt(courseId),
+          lessonData: {
+            lessonId,
+            data
+          },
+          currentLesson: {
+            lessonId,
+            moduleTitle: modules.find(m => m.id === expandedModule)?.title || ""
+          }
+        }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        // Update user context to reflect changes
+        if (updateUser && result.purchasedCourses) {
+          updateUser({ purchasedCourses: result.purchasedCourses });
+        }
+      }
+    } catch (error) {
+      console.error("Error saving lesson data:", error);
+    }
+  };
 
   const completeLesson = async (lessonId) => {
     // API logic for completing lesson...
@@ -313,14 +489,15 @@ export default function Learning() {
   };
 
   const formatTime = (time) => {
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
+    if (time === undefined || time === null || Object.is(time, NaN) || !isFinite(time)) return "0:00";
+    const minutes = Math.floor(Math.abs(time) / 60);
+    const seconds = Math.floor(Math.abs(time) % 60);
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
   return (
-    <div className="min-h-screen bg-canvas-alt flex">
-      <Header sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
+    <div className="min-h-screen bg-canvas-alt flex flex-col">
+      <Header />
 
       <div className="fixed left-0 top-16 bottom-0 w-80 text-main bg-card border-r border-border overflow-y-auto z-10">
         <div className="p-6 h-full overflow-y-auto">
@@ -329,6 +506,25 @@ export default function Learning() {
             <button onClick={() => navigate("/courses")} className="text-muted hover:text-main">
               <ChevronLeft className="w-5 h-5" />
             </button>
+            <ChevronRight className="w-4 h-4 text-muted" />
+            {/* Show current module name instead of course title */}
+            <button
+              className="hover:text-blue-600 transition-colors"
+              disabled
+              style={{ cursor: 'default', opacity: 1, fontWeight: 600 }}
+            >
+              {(() => {
+                if (modules && currentLesson) {
+                  const mod = modules.find(m => m.lessons?.some(l => l.id === currentLesson.id));
+                  return mod?.title || 'Module';
+                }
+                return 'Module';
+              })()}
+            </button>
+            <ChevronRight className="w-4 h-4 text-muted" />
+            <span className="text-main font-medium">
+              {currentLesson?.title}
+            </span>
           </div>
           <div className="mb-4">
             <h3 className="text-sm font-semibold text-main mb-3">Celebrities</h3>
@@ -345,7 +541,6 @@ export default function Learning() {
             </div>
           </div>
         </div>
-      </div>
 
       <div className="ml-80 p-6 w-full">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

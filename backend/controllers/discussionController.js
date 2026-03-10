@@ -1,202 +1,219 @@
-import Discussion from "../models/Discussion.js";
-import User from "../models/User.js";
+// REPLACED by communityController.js, can delete this file but keeping for reference
 
-// @desc    Create a new discussion
-// @route   POST /api/discussions
-// @access  Private
-const createDiscussion = async (req, res) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ message: "Not authorized" });
-    }
 
-    const { title, description } = req.body;
 
-    if (!title || !description) {
-      return res
-        .status(400)
-        .json({ message: "Title and description are required" });
-    }
+// import Discussion from "../models/Discussion.js";
+// import User from "../models/User.js";
+// import crypto from "crypto";
 
-    const discussion = await Discussion.create({
-      userId: req.user.id,
-      title,
-      description,
-      replies: [],
-      likes: [],
-    });
+// // @desc    Create a new discussion
+// // @route   POST /api/discussions
+// // @access  Private
+// const createDiscussion = async (req, res) => {
+//   try {
+//     if (!req.user) {
+//       return res.status(401).json({ message: "Not authorized" });
+//     }
 
-    const populatedDiscussion = await Discussion.findByPk(discussion.id, {
-      include: [{ model: User, as: "author", attributes: ["name", "email"] }],
-    });
+//     const { title, description } = req.body;
 
-    res.status(201).json(populatedDiscussion);
-  } catch (error) {
-    console.error("CREATE DISCUSSION ERROR:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
+//     if (!title || !description) {
+//       return res
+//         .status(400)
+//         .json({ message: "Title and description are required" });
+//     }
 
-// @desc    Get all discussions
-// @route   GET /api/discussions
-// @access  Private
-const getDiscussions = async (req, res) => {
-  try {
-    const discussions = await Discussion.findAll({
-      include: [{ model: User, as: "author", attributes: ["name", "email"] }],
-      order: [["createdAt", "DESC"]],
-    });
+//     const discussion = await Discussion.create({
+//       userId: req.user.id,
+//       title,
+//       description,
+//       replies: [],
+//       likes: [],
+//     });
 
-    // Since replies are JSONB and contain user IDs, we might want to populate them
-    // but for simplicity in this conversion, we'll return them as is.
-    // In a real migration, you'd either normalize or fetch users separately.
+//     const populatedDiscussion = await Discussion.findByPk(discussion.id, {
+//       include: [{ model: User, as: "author", attributes: ["name", "email"] }],
+//     });
 
-    res.json(discussions);
-  } catch (error) {
-    console.error("GET DISCUSSIONS ERROR:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
+//     res.status(201).json(populatedDiscussion);
+//   } catch (error) {
+//     console.error("CREATE DISCUSSION ERROR:", error);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
 
-// @desc    Add reply to discussion
-// @route   POST /api/discussions/:id/reply
-// @access  Private
-const addReplyToDiscussion = async (req, res) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ message: "Not authorized" });
-    }
+// // @desc    Get all discussions
+// // @route   GET /api/discussions
+// // @access  Private
+// const getDiscussions = async (req, res) => {
+//   try {
+//     const discussions = await Discussion.findAll({
+//       include: [{ model: User, as: "author", attributes: ["name", "email"] }],
+//       order: [["createdAt", "DESC"]],
+//     });
 
-    const { text } = req.body;
-    const discussionId = req.params.id;
+//     // Since replies are JSONB and contain user IDs, we might want to populate them
+//     // but for simplicity in this conversion, we'll return them as is.
+//     // In a real migration, you'd either normalize or fetch users separately.
 
-    if (!text) {
-      return res.status(400).json({ message: "Reply text is required" });
-    }
+//     res.json(discussions);
+//   } catch (error) {
+//     console.error("GET DISCUSSIONS ERROR:", error);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
 
-    const discussion = await Discussion.findByPk(discussionId);
+// // @desc    Add reply to discussion
+// // @route   POST /api/discussions/:id/reply
+// // @access  Private
+// const addReplyToDiscussion = async (req, res) => {
+//   try {
+//     if (!req.user) {
+//       return res.status(401).json({ message: "Not authorized" });
+//     }
 
-    if (!discussion) {
-      return res.status(404).json({ message: "Discussion not found" });
-    }
+//     const { text } = req.body;
+//     const discussionId = req.params.id;
 
-    const newReply = {
-      id: crypto.randomUUID(), // Using standard crypto or uuid
-      userId: req.user.id,
-      text,
-      likes: [],
-      createdAt: new Date(),
-    };
+//     if (!discussionId) {
+//       return res.status(400).json({ message: "Discussion ID is required" });
+//     }
 
-    const updatedReplies = [...discussion.replies, newReply];
-    discussion.replies = updatedReplies;
-    await discussion.save();
+//     if (!text) {
+//       return res.status(400).json({ message: "Reply text is required" });
+//     }
 
-    const updatedDiscussion = await Discussion.findByPk(discussionId, {
-      include: [{ model: User, as: "author", attributes: ["name", "email"] }],
-    });
+//     const discussion = await Discussion.findByPk(discussionId);
 
-    res.json(updatedDiscussion);
-  } catch (error) {
-    console.error("ADD REPLY ERROR:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
+//     if (!discussion) {
+//       return res.status(404).json({ message: "Discussion not found" });
+//     }
 
-// @desc    Like/Unlike discussion
-// @route   PUT /api/discussions/:id/like
-// @access  Private
-const likeDiscussion = async (req, res) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ message: "Not authorized" });
-    }
+//     const newReply = {
+//       id: crypto.randomUUID(), // Using standard crypto or uuid
+//       userId: req.user.id,
+//       text,
+//       likes: [],
+//       createdAt: new Date(),
+//     };
 
-    const discussionId = req.params.id;
-    const userId = req.user.id;
+//     const updatedReplies = [...discussion.replies, newReply];
+//     discussion.replies = updatedReplies;
+//     await discussion.save();
 
-    const discussion = await Discussion.findByPk(discussionId);
+//     const updatedDiscussion = await Discussion.findByPk(discussionId, {
+//       include: [{ model: User, as: "author", attributes: ["name", "email"] }],
+//     });
 
-    if (!discussion) {
-      return res.status(404).json({ message: "Discussion not found" });
-    }
+//     res.json(updatedDiscussion);
+//   } catch (error) {
+//     console.error("ADD REPLY ERROR:", error);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
 
-    let likes = discussion.likes || [];
-    const likeIndex = likes.findIndex((like) => like.userId === userId);
+// // @desc    Like/Unlike discussion
+// // @route   PUT /api/discussions/:id/like
+// // @access  Private
+// const likeDiscussion = async (req, res) => {
+//   try {
+//     if (!req.user) {
+//       return res.status(401).json({ message: "Not authorized" });
+//     }
 
-    if (likeIndex > -1) {
-      likes = likes.filter((like) => like.userId !== userId);
-    } else {
-      likes.push({ userId });
-    }
+//     const discussionId = req.params.id;
 
-    discussion.likes = likes;
-    await discussion.save();
+//     if (!discussionId) {
+//       return res.status(400).json({ message: "Discussion ID is required" });
+//     }
+//     const userId = req.user.id;
 
-    const updatedDiscussion = await Discussion.findByPk(discussionId, {
-      include: [{ model: User, as: "author", attributes: ["name", "email"] }],
-    });
+//     const discussion = await Discussion.findByPk(discussionId);
 
-    res.json(updatedDiscussion);
-  } catch (error) {
-    console.error("LIKE DISCUSSION ERROR:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
+//     if (!discussion) {
+//       return res.status(404).json({ message: "Discussion not found" });
+//     }
 
-// @desc    Like/Unlike reply
-// @route   PUT /api/discussions/:discussionId/reply/:replyId/like
-// @access  Private
-const likeReply = async (req, res) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ message: "Not authorized" });
-    }
+//     let likes = discussion.likes || [];
+//     const likeIndex = likes.findIndex((like) => like.userId === userId);
 
-    const { discussionId, replyId } = req.params;
-    const userId = req.user.id;
+//     if (likeIndex > -1) {
+//       likes = likes.filter((like) => like.userId !== userId);
+//     } else {
+//       likes.push({ userId });
+//     }
 
-    const discussion = await Discussion.findByPk(discussionId);
+//     discussion.likes = likes;
+//     await discussion.save();
 
-    if (!discussion) {
-      return res.status(404).json({ message: "Discussion not found" });
-    }
+//     const updatedDiscussion = await Discussion.findByPk(discussionId, {
+//       include: [{ model: User, as: "author", attributes: ["name", "email"] }],
+//     });
 
-    const replies = [...discussion.replies];
-    const replyIndex = replies.findIndex((r) => r.id === replyId);
+//     res.json(updatedDiscussion);
+//   } catch (error) {
+//     console.error("LIKE DISCUSSION ERROR:", error);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
 
-    if (replyIndex === -1) {
-      return res.status(404).json({ message: "Reply not found" });
-    }
+// // @desc    Like/Unlike reply
+// // @route   PUT /api/discussions/:discussionId/reply/:replyId/like
+// // @access  Private
+// const likeReply = async (req, res) => {
+//   try {
+//     if (!req.user) {
+//       return res.status(401).json({ message: "Not authorized" });
+//     }
 
-    let replyLikes = replies[replyIndex].likes || [];
-    const likeIndex = replyLikes.findIndex((like) => like.userId === userId);
+//     const { discussionId, replyId } = req.params;
 
-    if (likeIndex > -1) {
-      replyLikes = replyLikes.filter((like) => like.userId !== userId);
-    } else {
-      replyLikes.push({ userId });
-    }
+//     if (!discussionId || !replyId) {
+//       return res.status(400).json({ message: "Discussion ID and Reply ID are required" });
+//     }
+//     const userId = req.user.id;
 
-    replies[replyIndex].likes = replyLikes;
-    discussion.replies = replies;
-    await discussion.save();
+//     const discussion = await Discussion.findByPk(discussionId);
 
-    const updatedDiscussion = await Discussion.findByPk(discussionId, {
-      include: [{ model: User, as: "author", attributes: ["name", "email"] }],
-    });
+//     if (!discussion) {
+//       return res.status(404).json({ message: "Discussion not found" });
+//     }
 
-    res.json(updatedDiscussion);
-  } catch (error) {
-    console.error("LIKE REPLY ERROR:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
+//     const replies = [...discussion.replies];
+//     const replyIndex = replies.findIndex((r) => r.id === replyId);
 
-export {
-  createDiscussion,
-  getDiscussions,
-  addReplyToDiscussion,
-  likeDiscussion,
-  likeReply,
-};
+//     if (replyIndex === -1) {
+//       return res.status(404).json({ message: "Reply not found" });
+//     }
+
+//     let replyLikes = replies[replyIndex].likes || [];
+//     const likeIndex = replyLikes.findIndex((like) => like.userId === userId);
+
+//     if (likeIndex > -1) {
+//       replyLikes = replyLikes.filter((like) => like.userId !== userId);
+//     } else {
+//       replyLikes.push({ userId });
+//     }
+
+//     replies[replyIndex].likes = replyLikes;
+//     discussion.replies = replies;
+//     await discussion.save();
+
+//     const updatedDiscussion = await Discussion.findByPk(discussionId, {
+//       include: [{ model: User, as: "author", attributes: ["name", "email"] }],
+//     });
+
+//     res.json(updatedDiscussion);
+//   } catch (error) {
+//     console.error("LIKE REPLY ERROR:", error);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
+
+// export {
+//   createDiscussion,
+//   getDiscussions,
+//   addReplyToDiscussion,
+//   likeDiscussion,
+//   likeReply,
+// };
