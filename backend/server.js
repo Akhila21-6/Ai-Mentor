@@ -13,6 +13,8 @@ import discussionRoutes from "./routes/discussionRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
 import sidebarRoutes from "./routes/sidebarRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
+import historyRoutes from "./routes/historyRoutes.js";
+import WatchHistory from "./models/WatchHistory.js";
 
 dotenv.config();
 
@@ -48,6 +50,7 @@ app.use("/api/discussions", discussionRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/sidebar", sidebarRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/history", historyRoutes);
 
 // Global error handler
 app.use((err, req, res, next) => {
@@ -65,6 +68,7 @@ const startServer = async () => {
     await connectDB();
     // Sync database models
     await sequelize.sync({ alter: true });
+    await WatchHistory.sync({ force: true });
     console.log("✅ Database models synced successfully");
     
     app.listen(PORT, () => {
