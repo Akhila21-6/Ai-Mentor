@@ -371,9 +371,6 @@ const Dashboard = () => {
                             alt={course.title}
                             className="w-full h-40 object-cover"
                           />
-                          <div className="absolute top-3 right-3 bg-card rounded-full p-2">
-                            <Bookmark className="w-4 h-4 text-teal-600" />
-                          </div>
                           <div className="absolute bottom-3 right-3 bg-card rounded-full px-2 py-1 flex items-center space-x-1">
                             <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
                             <span className="text-xs font-medium">

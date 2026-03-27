@@ -23,11 +23,8 @@ const VideoPlayer = ({
   toggleMute,
   handleSeek,
   toggleFullscreen,
-  formatTime,
   onEnded,
 }) => {
-
-
   const [isBuffering, setIsBuffering] = useState(false);
   const [showCaptions, setShowCaptions] = useState(true);
   const [showControls, setShowControls] = useState(true);
@@ -84,6 +81,18 @@ const VideoPlayer = ({
     };
   }, []);
 
+  // --- ADDED FORMAT TIME FUNCTION HERE ---
+  const formatTime = (time) => {
+    if (time && !isNaN(time)) {
+      const minutes = Math.floor(time / 60);
+      const formatMinutes = minutes < 10 ? `0${minutes}` : `${minutes}`;
+      const seconds = Math.floor(time % 60);
+      const formatSeconds = seconds < 10 ? `0${seconds}` : `${seconds}`;
+      return `${formatMinutes}:${formatSeconds}`;
+    }
+    return '00:00';
+  };
+
   return (
     <div
       ref={playerContainerRef}
@@ -135,7 +144,7 @@ const VideoPlayer = ({
           onClick={handleSeek}
         >
           <div
-            className="bg-blue-600 h-full rounded-full transition-all pointer-events-none"  // 👈 add pointer-events-none
+            className="bg-blue-600 h-full rounded-full transition-all pointer-events-none"
             style={{ width: `${progress}%` }}
           ></div>
         </div>
